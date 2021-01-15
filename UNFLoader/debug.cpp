@@ -156,7 +156,11 @@ void debug_main(ftdi_context_t *cart)
         // Send Acknowledge
         if (ack != 0)
         {
-            Sleep(100);
+            #ifndef LINUX
+                Sleep(100);
+            #else
+                usleep(100);
+            #endif
             pdprint("Sending Acknowledge (%d bytes)...\n", CRDEF_INFO, ack);
             device_senddata(DATATYPE_ACK, ackbuff, ack);
         }
