@@ -17,7 +17,7 @@ Handles USB I/O.
 
 #define VERBOSE     0
 #define BUFFER_SIZE 512
-#define HEADER_SIZE 16
+#define HEADER_SIZE 256
 #define BLINKRATE   40
 #define PATH_SIZE   256
 
@@ -34,6 +34,7 @@ void debug_handle_text(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
 void debug_handle_rawbinary(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
 void debug_handle_header(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
 void debug_handle_screenshot(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
+void debug_handle_file(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
 
 
 /*********************************
@@ -402,6 +403,7 @@ void debug_decidedata(ftdi_context_t* cart, u32 info, char* buffer, u32* read)
         case DATATYPE_RAWBINARY:  debug_handle_rawbinary(cart, size, buffer, read); break;
         case DATATYPE_HEADER:     debug_handle_header(cart, size, buffer, read); break;
         case DATATYPE_SCREENSHOT: debug_handle_screenshot(cart, size, buffer, read); break;
+        case DATATYPE_FILE:       debug_handle_file(cart, size, buffer, read); break;
         default:                  terminate("Unknown data type.");
     }
 }
@@ -539,8 +541,35 @@ void debug_handle_header(ftdi_context_t* cart, u32 size, char* buffer, u32* read
     {
         // Read from the USB and save it to the global headerdata
         FT_Read(cart->handle, buffer, left, &cart->bytes_read);
-        for (int i=0; i<(int)cart->bytes_read; i+=4)
-            debug_headerdata[i/4] = swap_endian(buffer[i + 3] << 24 | buffer[i + 2] << 16 | buffer[i + 1] << 8 | buffer[i]);
+
+        // Check Header Type Info
+        debug_headerdata[0] = swap_endian(buffer[3] << 24 | buffer[2] << 16 | buffer[1] << 8 | buffer[0]);
+
+        switch (debug_headerdata[0])
+        {
+        case DATATYPE_FILE:
+            //Format:
+            //(4)   u32   size
+            //(8)   u32   dummy
+            //(12)  char* filename
+            for (int i = 4; i < 12; i += 4)
+                debug_headerdata[i / 4] = swap_endian(buffer[i + 3] << 24 | buffer[i + 2] << 16 | buffer[i + 1] << 8 | buffer[i]);
+            for (int i = 12; i < (int)cart->bytes_read; i += 4)
+                debug_headerdata[i / 4] = (buffer[i + 3] << 24 | buffer[i + 2] << 16 | buffer[i + 1] << 8 | buffer[i]);
+            /*for (int i = 0; i < size; i += 0x10)
+            {
+                pdprint("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n", CRDEF_INFO,
+                    buffer[i + 0], buffer[i + 1], buffer[i + 2], buffer[i + 3], buffer[i + 4], buffer[i + 5], buffer[i + 6], buffer[i + 7],
+                    buffer[i + 8], buffer[i + 9], buffer[i + 10], buffer[i + 11], buffer[i + 12], buffer[i + 13], buffer[i + 14], buffer[i + 15]);
+            }*/
+            pdprint("File Info:\nSize: %d bytes\nDummy: %08x\nFilename: %s\n", CRDEF_INFO, debug_headerdata[1], debug_headerdata[2], (char*)&debug_headerdata[3]);
+            break;
+        default:
+            //Assume every value is 32-bit
+            for (int i = 4; i < (int)cart->bytes_read; i += 4)
+                debug_headerdata[i / 4] = swap_endian(buffer[i + 3] << 24 | buffer[i + 2] << 16 | buffer[i + 1] << 8 | buffer[i]);
+            break;
+        }
 
         // Store the amount of bytes read
         (*read) += cart->bytes_read;
@@ -652,4 +681,80 @@ void debug_handle_screenshot(ftdi_context_t* cart, u32 size, char* buffer, u32* 
     free(image);
     free(filename);
     free(extraname);
+}
+
+/*==============================
+    debug_handle_file
+    Handles DATATYPE_FILE
+    @param A pointer to the cart context
+    @param The size of the incoming data
+    @param The buffer to use
+    @param A pointer to a variable that stores the number of bytes read
+==============================*/
+
+void debug_handle_file(ftdi_context_t* cart, u32 size, char* buffer, u32* read)
+{
+    int total = 0;
+    int left = size;
+    char* filename = (char*)malloc(PATH_SIZE);
+    u32 ack[2];
+    FILE* fp;
+
+    // Ensure we got a data header of type file
+    if (debug_headerdata[0] != DATATYPE_FILE)
+        terminate("Unexpected header for file.");
+
+    // Ensure we malloced successfully
+    if (filename == NULL)
+        terminate("Unable to allocate memory for binary file.");
+
+    // Create the binary file to save data to
+    memset(filename, 0, PATH_SIZE);
+#ifndef LINUX
+    if (global_exportpath != NULL)
+        strcat_s(filename, PATH_SIZE, global_exportpath);
+    strcat_s(filename, PATH_SIZE, (char*)&debug_headerdata[3]);
+    fopen_s(&fp, filename, "ab+");
+#else
+    if (global_exportpath != NULL)
+        strcat(filename, global_exportpath);
+    strcat(filename, &debug_headerdata[3]);
+    fp = fopen(filename, "ab+");
+#endif
+
+    // Ensure the file was created
+    if (fp == NULL)
+        terminate("Unable to create binary file %s.", filename);
+
+    // Ensure the data fits within our buffer
+    if (left > BUFFER_SIZE)
+        left = BUFFER_SIZE;
+
+    // Read bytes until we finished
+    while (left != 0)
+    {
+        // Read from the USB and save it to our binary file
+        FT_Read(cart->handle, buffer, left, &cart->bytes_read);
+        fwrite(buffer, 1, left, fp);
+
+        // Store the amount of bytes read
+        (*read) += cart->bytes_read;
+        total += cart->bytes_read;
+
+        // Ensure the data fits within our buffer
+        left = size - total;
+        if (left > BUFFER_SIZE)
+            left = BUFFER_SIZE;
+    }
+
+    // Close the file and free the memory used for the filename
+    pdprint("Wrote %d bytes to %s.\n", CRDEF_INFO, size, filename);
+    fclose(fp);
+
+    ack[0] = DATATYPE_FILE;
+    ack[1] = size;
+    debug_headerdata[1] -= size;
+
+    Sleep(100);
+    device_senddata(DATATYPE_ACK, (char*)ack, sizeof(ack));
 }
