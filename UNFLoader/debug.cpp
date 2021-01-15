@@ -739,7 +739,7 @@ u32 debug_handle_file(ftdi_context_t* cart, u32 size, char* buffer, u32* read, c
 #else
     if (global_exportpath != NULL)
         strcat(filename, global_exportpath);
-    strcat(filename, &debug_headerdata[3]);
+    strcat(filename, (char*)&debug_headerdata[3]);
     fp = fopen(filename, "ab+");
 #endif
 
