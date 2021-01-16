@@ -29,12 +29,12 @@ Handles USB I/O.
 void debug_textinput(ftdi_context_t* cart, WINDOW* inputwin, char* buffer, u16* cursorpos, int ch);
 void debug_appendfilesend(char* data, u32 size);
 void debug_filesend(char* filename);
-u32 debug_decidedata(ftdi_context_t* cart, u32 info, char* buffer, u32* read, char* ack);
-u32 debug_handle_text(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack);
-u32 debug_handle_rawbinary(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack);
-u32 debug_handle_header(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack);
-u32 debug_handle_screenshot(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack);
-u32 debug_handle_file(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack);
+void debug_decidedata(ftdi_context_t* cart, u32 info, char* buffer, u32* read);
+void debug_handle_text(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
+void debug_handle_rawbinary(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
+void debug_handle_header(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
+void debug_handle_screenshot(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
+void debug_handle_file(ftdi_context_t* cart, u32 size, char* buffer, u32* read);
 
 
 /*********************************
@@ -94,8 +94,6 @@ void debug_main(ftdi_context_t *cart)
     for ( ; ; ) 
 	{
         char ch = getch();
-        u32 ack = 0;
-        char ackbuff[BUFFER_SIZE];
 
         // If ESC is pressed, stop the loop
 		if (ch == 27 || (global_timeout != 0 && debugtimeout < clock()))
@@ -123,7 +121,7 @@ void debug_main(ftdi_context_t *cart)
             info = swap_endian(outbuff[3] << 24 | outbuff[2] << 16 | outbuff[1] << 8 | outbuff[0]);
 
             // Decide what to do with the received data
-            ack = debug_decidedata(cart, info, outbuff, &read, ackbuff);
+            debug_decidedata(cart, info, outbuff, &read);
 
             // Read the completion signal
             FT_Read(cart->handle, outbuff, 4, &cart->bytes_read);
@@ -151,18 +149,6 @@ void debug_main(ftdi_context_t *cart)
             #else
                 usleep(10);
             #endif
-        }
-
-        // Send Acknowledge
-        if (ack != 0)
-        {
-            #ifndef LINUX
-                Sleep(100);
-            #else
-                usleep(100);
-            #endif
-            pdprint("Sending Acknowledge (%d bytes)...\n", CRDEF_INFO, ack);
-            device_senddata(DATATYPE_ACK, ackbuff, ack);
         }
     }
 
@@ -405,7 +391,7 @@ void debug_filesend(char* filename)
     @param A pointer to a variable that stores the number of bytes read
 ==============================*/
 
-u32 debug_decidedata(ftdi_context_t* cart, u32 info, char* buffer, u32* read, char* ack)
+void debug_decidedata(ftdi_context_t* cart, u32 info, char* buffer, u32* read)
 {
     u8 command = (info >> 24) & 0xFF;
     u32 size = info & 0xFFFFFF;
@@ -413,12 +399,12 @@ u32 debug_decidedata(ftdi_context_t* cart, u32 info, char* buffer, u32* read, ch
     // Decide what to do with the data based off the command type
     switch (command)
     {
-        case DATATYPE_TEXT:       return debug_handle_text(cart, size, buffer, read, ack); break;
-        case DATATYPE_RAWBINARY:  return debug_handle_rawbinary(cart, size, buffer, read, ack); break;
-        case DATATYPE_HEADER:     return debug_handle_header(cart, size, buffer, read, ack); break;
-        case DATATYPE_SCREENSHOT: return debug_handle_screenshot(cart, size, buffer, read, ack); break;
-        case DATATYPE_FILE:       return debug_handle_file(cart, size, buffer, read, ack); break;
-        default:                  terminate("Unknown data type."); return 0;
+        case DATATYPE_TEXT:       debug_handle_text(cart, size, buffer, read); break;
+        case DATATYPE_RAWBINARY:  debug_handle_rawbinary(cart, size, buffer, read); break;
+        case DATATYPE_HEADER:     debug_handle_header(cart, size, buffer, read); break;
+        case DATATYPE_SCREENSHOT: debug_handle_screenshot(cart, size, buffer, read); break;
+        case DATATYPE_FILE:       debug_handle_file(cart, size, buffer, read); break;
+        default:                  terminate("Unknown data type.");
     }
 }
 
@@ -432,7 +418,7 @@ u32 debug_decidedata(ftdi_context_t* cart, u32 info, char* buffer, u32* read, ch
     @param A pointer to a variable that stores the number of bytes read
 ==============================*/
 
-u32 debug_handle_text(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack)
+void debug_handle_text(ftdi_context_t* cart, u32 size, char* buffer, u32* read)
 {
     int total = 0;
     int left = size;
@@ -457,8 +443,6 @@ u32 debug_handle_text(ftdi_context_t* cart, u32 size, char* buffer, u32* read, c
         if (left > BUFFER_SIZE)
             left = BUFFER_SIZE;
     }
-
-    return 0;
 }
 
 
@@ -471,7 +455,7 @@ u32 debug_handle_text(ftdi_context_t* cart, u32 size, char* buffer, u32* read, c
     @param A pointer to a variable that stores the number of bytes read
 ==============================*/
 
-u32 debug_handle_rawbinary(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack)
+void debug_handle_rawbinary(ftdi_context_t* cart, u32 size, char* buffer, u32* read)
 {
     int total = 0;
     int left = size;
@@ -531,8 +515,6 @@ u32 debug_handle_rawbinary(ftdi_context_t* cart, u32 size, char* buffer, u32* re
     fclose(fp);
     free(filename);
     free(extraname);
-
-    return 0;
 }
 
 
@@ -545,7 +527,7 @@ u32 debug_handle_rawbinary(ftdi_context_t* cart, u32 size, char* buffer, u32* re
     @param A pointer to a variable that stores the number of bytes read
 ==============================*/
 
-u32 debug_handle_header(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack)
+void debug_handle_header(ftdi_context_t* cart, u32 size, char* buffer, u32* read)
 {
     int total = 0;
     int left = size;
@@ -574,12 +556,6 @@ u32 debug_handle_header(ftdi_context_t* cart, u32 size, char* buffer, u32* read,
                 debug_headerdata[i / 4] = swap_endian(buffer[i + 3] << 24 | buffer[i + 2] << 16 | buffer[i + 1] << 8 | buffer[i]);
             for (int i = 12; i < (int)cart->bytes_read; i += 4)
                 debug_headerdata[i / 4] = (buffer[i + 3] << 24 | buffer[i + 2] << 16 | buffer[i + 1] << 8 | buffer[i]);
-            /*for (int i = 0; i < size; i += 0x10)
-            {
-                pdprint("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n", CRDEF_INFO,
-                    buffer[i + 0], buffer[i + 1], buffer[i + 2], buffer[i + 3], buffer[i + 4], buffer[i + 5], buffer[i + 6], buffer[i + 7],
-                    buffer[i + 8], buffer[i + 9], buffer[i + 10], buffer[i + 11], buffer[i + 12], buffer[i + 13], buffer[i + 14], buffer[i + 15]);
-            }*/
             pdprint("File Info:\nSize: %d bytes\nDummy: %08x\nFilename: %s\n", CRDEF_INFO, debug_headerdata[1], debug_headerdata[2], (char*)&debug_headerdata[3]);
             break;
         default:
@@ -598,8 +574,6 @@ u32 debug_handle_header(ftdi_context_t* cart, u32 size, char* buffer, u32* read,
         if (left > HEADER_SIZE)
             left = HEADER_SIZE;
     }
-
-    return 0;
 }
 
 
@@ -612,7 +586,7 @@ u32 debug_handle_header(ftdi_context_t* cart, u32 size, char* buffer, u32* read,
     @param A pointer to a variable that stores the number of bytes read
 ==============================*/
 
-u32 debug_handle_screenshot(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack)
+void debug_handle_screenshot(ftdi_context_t* cart, u32 size, char* buffer, u32* read)
 {
     int total = 0;
     int left = size;
@@ -701,8 +675,6 @@ u32 debug_handle_screenshot(ftdi_context_t* cart, u32 size, char* buffer, u32* r
     free(image);
     free(filename);
     free(extraname);
-
-    return 0;
 }
 
 /*==============================
@@ -714,7 +686,7 @@ u32 debug_handle_screenshot(ftdi_context_t* cart, u32 size, char* buffer, u32* r
     @param A pointer to a variable that stores the number of bytes read
 ==============================*/
 
-u32 debug_handle_file(ftdi_context_t* cart, u32 size, char* buffer, u32* read, char* ack)
+void debug_handle_file(ftdi_context_t* cart, u32 size, char* buffer, u32* read)
 {
     int total = 0;
     int left = size;
@@ -772,9 +744,5 @@ u32 debug_handle_file(ftdi_context_t* cart, u32 size, char* buffer, u32* read, c
     pdprint("Wrote %d bytes to %s.\n", CRDEF_INFO, size, filename);
     fclose(fp);
 
-    *(u32*)&ack[0] = swap_endian(DATATYPE_FILE);
-    *(u32*)&ack[4] = swap_endian(size);
     debug_headerdata[1] -= size;
-
-    return 8;
 }
